@@ -50,10 +50,13 @@ Compared with routing everything through plain Chat Completions compatibility, t
 
 - **OpenAI & Anthropic Compatibility**: Exposes GitHub Copilot as an OpenAI-compatible (`/v1/responses`, `/v1/chat/completions`, `/v1/models`, `/v1/embeddings`) and Anthropic-compatible (`/v1/messages`) API.
 - **Anthropic-First Routing for Claude Models**: When a model supports Copilot's native `/v1/messages` endpoint, the proxy prefers it over `/responses` or `/chat/completions`, preserving Anthropic-style `tool_use` / `tool_result` flows and more Claude-native behavior.
-- **Fewer Unnecessary Premium Requests**: Reduces wasted premium usage by routing warmup requests to `smallModel`, merging `tool_result` follow-ups back into the tool flow, and treating resumed tool turns as continuation traffic instead of fresh premium interactions.
+- **Fewer Unnecessary Premium Requests**: Reduces wasted premium usage by routing warmup requests to `smallModel`, merging `tool_result` follow-ups back into the tool flow, treating resumed tool turns as continuation traffic instead of fresh premium interactions, and detecting OpenCode compaction and post-compaction continuation requests as background traffic.
 - **Phase-Aware `gpt-5.4` and `gpt-5.3-codex`**: These models can emit user-friendly commentary before deeper reasoning or tool use, so long-running coding actions are easier to understand instead of appearing as a sudden tool burst.
 - **Claude Native Beta Support**: On the Messages API path, supports Anthropic-native capabilities such as `interleaved-thinking`, `advanced-tool-use`, and `context-management`, which are difficult or unavailable through plain Chat Completions compatibility.
 - **Subagent Marker Integration**: Claude Code and opencode plugins can inject `__SUBAGENT_MARKER__...` and propagate `x-session-id` so subagent traffic keeps the correct root session and agent/user semantics.
+- **Agent Framework Detection**: Detects OhMyOpenCode agent-framework-initiated messages via `<!-- OMO_INTERNAL_INITIATOR -->` content marker and `x-omo-initiator` header, preventing them from being incorrectly billed as user-initiated premium requests.
+- **Continuation Phrase Detection**: Short user messages like "continue", "繼續", "ok", "yes" are automatically classified as non-premium agent traffic via the opencode plugin, avoiding unnecessary premium consumption for simple continuation prompts.
+- **Premium Request Tracking**: Built-in tracking of every request's premium billing status, including initiator classification (compact/continue/agent/user), premium before/after counts, and request content preview. Accessible via the `/premium-tracking` API endpoint and the usage dashboard.
 - **OpenCode via `@ai-sdk/anthropic`**: Point OpenCode at this proxy as an Anthropic provider so Anthropic Messages semantics, premium-request optimizations, and Claude-native behavior are preserved end to end.
 - **Claude Code Integration**: Easily configure and launch [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) to use Copilot as its backend with a simple command-line flag (`--claude-code`).
 - **Usage Dashboard**: A web-based dashboard to monitor your Copilot API usage, view quotas, and see detailed statistics.
@@ -385,10 +388,11 @@ These endpoints are designed to be compatible with the Anthropic Messages API.
 
 New endpoints for monitoring your Copilot usage and quotas.
 
-| Endpoint     | Method | Description                                                  |
-| ------------ | ------ | ------------------------------------------------------------ |
-| `GET /usage` | `GET`  | Get detailed Copilot usage statistics and quota information. |
-| `GET /token` | `GET`  | Get the current Copilot token being used by the API.         |
+| Endpoint                | Method | Description                                                                              |
+| ----------------------- | ------ | ---------------------------------------------------------------------------------------- |
+| `GET /usage`            | `GET`  | Get detailed Copilot usage statistics and quota information.                              |
+| `GET /token`            | `GET`  | Get the current Copilot token being used by the API.                                     |
+| `GET /premium-tracking` | `GET`  | Get premium request tracking data including per-request billing status and classifications. |
 
 ## Example Usage
 
@@ -651,29 +655,42 @@ The plugin also registers a `UserPromptSubmit` hook that returns `{"continue": t
 - `CLAUDE_PLUGIN_ENABLE_QUESTION_RULES=1` enables the two reminders about using the `question` tool automatically for Claude Code. Alternatively, you can add the same reminders manually in `CLAUDE.md`; see [CLAUDE.md or AGENTS.md Recommended Content](#claudemd-or-agentsmd-recommended-content).
 - `CLAUDE_PLUGIN_ENABLE_NO_BACKGROUND_AGENTS_RULE=1` enables the `run_in_background: true` avoidance reminder for agent hooks.
 
-#### Opencode plugin
+#### Opencode plugins
 
-The subagent marker producer is packaged as an opencode plugin located at `.opencode/plugins/subagent-marker.js`.
+Several opencode plugins are included in `.opencode/plugins/`:
 
 **Installation:**
 
-Copy the plugin file to your opencode plugins directory:
+Copy all plugin files to your opencode plugins directory:
 
 ```sh
-# Clone or download this repository, then copy the plugin
-cp .opencode/plugins/subagent-marker.js ~/.config/opencode/plugins/
+# Clone or download this repository, then copy the plugins
+cp .opencode/plugins/*.js ~/.config/opencode/plugins/
+cp .opencode/plugins/*.tsx ~/.config/opencode/plugins/
 ```
 
-Or manually create the file at `~/.config/opencode/plugins/subagent-marker.js` with the plugin content.
+##### subagent-marker.js
+
+The core plugin for subagent detection, agent-framework classification, and continuation phrase handling.
 
 **Features:**
 
 - Tracks sub-sessions created by subagents
 - Automatically prepends a marker system reminder (`__SUBAGENT_MARKER__...`) to subagent chat messages
 - Sets `x-session-id` header for session tracking
+- Detects `<!-- OMO_INTERNAL_INITIATOR -->` in messages and sets `x-omo-initiator: agent` header to prevent agent-framework-initiated messages from consuming premium requests
+- Detects short continuation phrases ("continue", "繼續", "ok", "yes", etc.) and classifies them as agent-initiated to avoid premium consumption
 - Enables this proxy to infer `x-initiator: agent` for subagent-originated requests
 
 The plugin hooks into `session.created`, `session.deleted`, `chat.message`, and `chat.headers` events to provide seamless subagent marker functionality.
+
+##### question-tool-enforcer.js
+
+Injects a `<system-reminder>` block into every user message enforcing the question tool usage rules (requiring agents to use the question tool for user interaction).
+
+##### premium-usage.tsx
+
+A TUI-based premium usage dashboard plugin that displays real-time premium request remaining counts and quota information directly in the opencode interface.
 
 ## Running from Source
 
