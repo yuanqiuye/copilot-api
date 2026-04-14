@@ -103,8 +103,6 @@ export const createMessages = async (
     headers,
   )
 
-  prepareForCompact(headers, options.isCompact)
-
   const { safetyIdentifier, sessionId } = parseUserIdMetadata(
     payload.metadata?.user_id,
   )
@@ -112,6 +110,11 @@ export const createMessages = async (
   if (safetyIdentifier && sessionId) {
     prepareMessageProxyHeaders(headers)
   }
+
+  // Must run AFTER prepareMessageProxyHeaders so that background headers
+  // (x-initiator: agent, x-interaction-type: conversation-background)
+  // are not overwritten by the messages-proxy interaction type.
+  prepareForCompact(headers, options.isCompact)
 
   // align with vscode copilot extension anthropic-beta
   const anthropicBeta = buildAnthropicBetaHeader(

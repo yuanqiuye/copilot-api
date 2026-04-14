@@ -16,6 +16,25 @@ const compactTextOnlyGuard =
 const compactSummaryPromptStart =
   "Your task is to create a detailed summary of the conversation so far"
 const compactMessageSections = ["Pending Tasks:", "Current Work:"] as const
+
+// OpenCode compaction prompt markers (from opencode/src/session/compaction.ts)
+const opencodeCompactNoTools = "Do not call any tools."
+const opencodeCompactContinuing = "continuing our conversation"
+const opencodeCompactSections = [
+  "## Goal",
+  "## Accomplished",
+  "## Relevant files",
+] as const
+
+// OpenCode post-compaction synthetic continuation text
+// (from opencode/src/session/compaction.ts – sent after compaction completes)
+const opencodePostCompactContinueText =
+  "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed."
+// Overflow prefix — older versions used "exceeded the context window",
+// current versions use "exceeded the provider's size limit".
+// Match the common prefix "The previous request exceeded" for forward compat.
+const opencodePostCompactOverflowPrefix = "The previous request exceeded"
+
 export const TOOL_REFERENCE_TURN_BOUNDARY = "Tool loaded."
 
 const getAnthropicEffortForModel = (
@@ -47,17 +66,29 @@ const getCompactCandidateText = (message: AnthropicMessage): string => {
     .join("\n\n")
 }
 
+const isLegacyCompactMessage = (text: string): boolean => {
+  return (
+    text.includes(compactTextOnlyGuard)
+    && text.includes(compactSummaryPromptStart)
+    && compactMessageSections.some((section) => text.includes(section))
+  )
+}
+
+const isOpencodeCompactMessage = (text: string): boolean => {
+  return (
+    text.includes(opencodeCompactNoTools)
+    && text.includes(opencodeCompactContinuing)
+    && opencodeCompactSections.some((section) => text.includes(section))
+  )
+}
+
 const isCompactMessage = (lastMessage: AnthropicMessage): boolean => {
   const text = getCompactCandidateText(lastMessage)
   if (!text) {
     return false
   }
 
-  return (
-    text.includes(compactTextOnlyGuard)
-    && text.includes(compactSummaryPromptStart)
-    && compactMessageSections.some((section) => text.includes(section))
-  )
+  return isLegacyCompactMessage(text) || isOpencodeCompactMessage(text)
 }
 
 export const isCompactRequest = (
@@ -79,6 +110,46 @@ export const isCompactRequest = (
       typeof msg.text === "string"
       && msg.text.startsWith(compactSystemPromptStart),
   )
+}
+
+// Detect OpenCode's synthetic post-compaction continuation message.
+// After compaction, OpenCode auto-sends a "Continue …" message that should
+// not consume a premium request (equivalent to VS Code's
+// X-Interaction-Type: conversation-background).
+const isPostCompactionContinueMessage = (
+  lastMessage: AnthropicMessage,
+): boolean => {
+  const text = getCompactCandidateText(lastMessage)
+  if (!text) {
+    return false
+  }
+
+  const trimmed = text.trim()
+
+  // Standard auto-continuation (no overflow)
+  if (trimmed === opencodePostCompactContinueText) {
+    return true
+  }
+
+  // Overflow variant: overflow notice followed by the continuation text
+  if (
+    trimmed.startsWith(opencodePostCompactOverflowPrefix)
+    && trimmed.endsWith(opencodePostCompactContinueText)
+  ) {
+    return true
+  }
+
+  return false
+}
+
+export const isPostCompactionContinue = (
+  anthropicPayload: AnthropicMessagesPayload,
+): boolean => {
+  const lastMessage = anthropicPayload.messages.at(-1)
+  if (!lastMessage) {
+    return false
+  }
+  return isPostCompactionContinueMessage(lastMessage)
 }
 
 const mergeContentWithText = (

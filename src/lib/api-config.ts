@@ -100,6 +100,11 @@ export const prepareForCompact = (
 ) => {
   if (isCompact) {
     headers["x-initiator"] = "agent"
+    // Match vscode-copilot-chat behavior: compaction/background requests use
+    // conversation-background interaction type to avoid premium billing.
+    if (!isOpencodeOauthApp()) {
+      headers["x-interaction-type"] = "conversation-background"
+    }
   }
 }
 
