@@ -77,6 +77,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await setupCopilotToken()
   await cacheModels()
 
+  // Initialize premium tracking (async, non-blocking on failure)
+  const { initPremiumTracking } = await import("./lib/premium-tracking")
+  void initPremiumTracking()
+
   consola.info(
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
   )

@@ -9,6 +9,7 @@ import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
 import { modelRoutes } from "./routes/models/route"
+import { premiumTrackingRoute } from "./routes/premium-tracking/route"
 import { providerMessageRoutes } from "./routes/provider/messages/route"
 import { providerModelRoutes } from "./routes/provider/models/route"
 import { responsesRoutes } from "./routes/responses/route"
@@ -23,7 +24,12 @@ server.use(cors())
 server.use(
   "*",
   createAuthMiddleware({
-    allowUnauthenticatedPaths: ["/", "/usage-viewer", "/usage-viewer/"],
+    allowUnauthenticatedPaths: [
+      "/",
+      "/usage-viewer",
+      "/usage-viewer/",
+      "/premium-tracking",
+    ],
   }),
 )
 
@@ -38,6 +44,7 @@ server.route("/chat/completions", completionRoutes)
 server.route("/models", modelRoutes)
 server.route("/embeddings", embeddingRoutes)
 server.route("/usage", usageRoute)
+server.route("/premium-tracking", premiumTrackingRoute)
 server.route("/token", tokenRoute)
 server.route("/responses", responsesRoutes)
 
