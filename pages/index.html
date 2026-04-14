@@ -406,7 +406,16 @@
                  ? `<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="background-color: rgba(152, 151, 26, 0.2); color: var(--color-green-accent);">agent</span>`
                  : `<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="background-color: rgba(214, 93, 14, 0.2); color: var(--color-orange-accent);">user</span>`;
              const rowBg = req.premiumConsumed ? 'rgba(204, 36, 29, 0.15)' : 'transparent';
-             const escapedContent = (req.lastMessageContent || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+             const rawContent = req.lastMessageContent || '';
+             // Collapse <system-reminder>...</system-reminder> blocks to a short summary
+             const collapseSystemReminders = (text) => {
+               return text.replace(/<system-reminder>\s*([\s\S]*?)\s*<\/system-reminder>/g, (_match, inner) => {
+                 const firstLine = inner.trim().split('\n')[0].slice(0, 80);
+                 return `[system-reminder: ${firstLine}${inner.length > 80 ? '…' : ''}]`;
+               });
+             };
+             const processedContent = collapseSystemReminders(rawContent);
+             const escapedContent = processedContent.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
              const hasContent = escapedContent.length > 0;
              
              return `
@@ -425,8 +434,8 @@
                ${hasContent ? `<tr style="border-bottom: 1px solid var(--color-bg-light-2);">
                  <td colspan="10" class="px-2 py-1">
                    <details>
-                     <summary class="cursor-pointer text-xs py-1" style="color: var(--color-gray-accent);">Last user message</summary>
-                     <pre class="mt-1 p-2 text-xs whitespace-pre-wrap break-words" style="background-color: var(--color-bg-light-1); color: var(--color-fg-medium); max-height: 200px; overflow-y: auto;">${escapedContent}</pre>
+                      <summary class="cursor-pointer text-xs py-1" style="color: var(--color-gray-accent);">Request content (last user message)</summary>
+                      <pre class="mt-1 p-2 text-xs whitespace-pre-wrap break-words" style="background-color: var(--color-bg-light-1); color: var(--color-fg-medium); max-height: 400px; overflow-y: auto;">${escapedContent}</pre>
                    </details>
                  </td>
                </tr>` : ''}

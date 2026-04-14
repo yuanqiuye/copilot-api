@@ -6,10 +6,7 @@ import { awaitApproval } from "~/lib/approval"
 import { getSmallModel, isMessagesApiEnabled } from "~/lib/config"
 import { createHandlerLogger, debugJson } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
-import {
-  checkPremiumAfterRequest,
-  trackRequest,
-} from "~/lib/premium-tracking"
+import { checkPremiumAfterRequest, trackRequest } from "~/lib/premium-tracking"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { generateRequestIdFromPayload, getRootSessionId } from "~/lib/utils"
@@ -34,7 +31,16 @@ import { parseSubagentMarkerFromFirstUser } from "./subagent-marker"
 
 const logger = createHandlerLogger("messages-handler")
 
-const MAX_CONTENT_LENGTH = 500
+const MAX_CONTENT_LENGTH = 3000
+
+const SYSTEM_REMINDER_RE = /<system-reminder>[\s\S]*?<\/system-reminder>/g
+
+const collapseSystemReminders = (text: string): string =>
+  text.replaceAll(SYSTEM_REMINDER_RE, (match) => {
+    const inner = match.replaceAll(/<\/?system-reminder>/g, "").trim()
+    const firstLine = inner.split("\n")[0].slice(0, 80)
+    return `[system-reminder: ${firstLine}${inner.length > 80 ? "…" : ""}]`
+  })
 
 const extractLastUserMessageContent = (
   payload: AnthropicMessagesPayload,
@@ -43,23 +49,53 @@ const extractLastUserMessageContent = (
     const msg = payload.messages[i]
     if (msg.role !== "user") continue
 
+    let raw: string | undefined
+
     if (typeof msg.content === "string") {
-      return msg.content.length > MAX_CONTENT_LENGTH
-        ? msg.content.slice(0, MAX_CONTENT_LENGTH) + "..."
-        : msg.content
+      raw = msg.content
+    } else {
+      const textBlocks = msg.content.filter(
+        (block): block is AnthropicTextBlock => block.type === "text",
+      )
+      if (textBlocks.length > 0) {
+        raw = textBlocks.map((b) => b.text).join("\n")
+      }
     }
 
-    const textBlocks = msg.content.filter(
-      (block): block is AnthropicTextBlock => block.type === "text",
-    )
-    if (textBlocks.length > 0) {
-      const text = textBlocks.map((b) => b.text).join("\n")
-      return text.length > MAX_CONTENT_LENGTH
-        ? text.slice(0, MAX_CONTENT_LENGTH) + "..."
-        : text
+    if (raw) {
+      const collapsed = collapseSystemReminders(raw)
+      return collapsed.length > MAX_CONTENT_LENGTH ?
+          collapsed.slice(0, MAX_CONTENT_LENGTH) + "..."
+        : collapsed
     }
   }
   return ""
+}
+
+const determineInitiator = (
+  payload: AnthropicMessagesPayload,
+  opts: {
+    isBackground: boolean
+    subagentMarker: ReturnType<typeof parseSubagentMarkerFromFirstUser>
+    omoInitiator: string | undefined
+  },
+): "user" | "agent" => {
+  if (opts.isBackground || opts.subagentMarker) return "agent"
+  if (opts.omoInitiator === "agent") return "agent"
+
+  const lastMessage = payload.messages.at(-1)
+  if (lastMessage?.role !== "user") return "agent"
+
+  const isInitiateRequest =
+    Array.isArray(lastMessage.content) ?
+      lastMessage.content.some(
+        (block) =>
+          block.type !== "tool_result"
+          && (block.type !== "text" || !isAgentFrameworkText(block.text)),
+      )
+    : !isAgentFrameworkText(lastMessage.content)
+
+  return isInitiateRequest ? "user" : "agent"
 }
 
 export async function handleCompletion(c: Context) {
@@ -114,27 +150,11 @@ export async function handleCompletion(c: Context) {
   // Determine effective x-initiator value (mirrors create-messages.ts logic)
   // Priority: isBackground > subagent > omoInitiator header > content-based detection
   const omoInitiator = c.req.header("x-omo-initiator")
-  let initiator: "user" | "agent" = "agent"
-  if (!isBackground && !subagentMarker) {
-    if (omoInitiator === "agent") {
-      initiator = "agent"
-    } else {
-      const lastMessage = anthropicPayload.messages.at(-1)
-      if (lastMessage?.role === "user") {
-        const isInitiateRequest =
-          Array.isArray(lastMessage.content)
-            ? lastMessage.content.some(
-                (block) =>
-                  block.type !== "tool_result"
-                  && !(
-                    block.type === "text" && isAgentFrameworkText(block.text)
-                  ),
-              )
-            : !isAgentFrameworkText(lastMessage.content)
-        initiator = isInitiateRequest ? "user" : "agent"
-      }
-    }
-  }
+  const initiator = determineInitiator(anthropicPayload, {
+    isBackground,
+    subagentMarker,
+    omoInitiator,
+  })
 
   // Track request for premium debugging
   const trackingId = trackRequest({
@@ -165,7 +185,7 @@ export async function handleCompletion(c: Context) {
       omoInitiator,
       logger,
     })
-    void checkPremiumAfterRequest(trackingId)
+    checkPremiumAfterRequest(trackingId)
     return response
   }
 
@@ -179,7 +199,7 @@ export async function handleCompletion(c: Context) {
       omoInitiator,
       logger,
     })
-    void checkPremiumAfterRequest(trackingId)
+    checkPremiumAfterRequest(trackingId)
     return response
   }
 
@@ -191,7 +211,7 @@ export async function handleCompletion(c: Context) {
     omoInitiator,
     logger,
   })
-  void checkPremiumAfterRequest(trackingId)
+  checkPremiumAfterRequest(trackingId)
   return response
 }
 
