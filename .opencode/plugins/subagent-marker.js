@@ -1,8 +1,12 @@
 const MARKER_PREFIX = "__SUBAGENT_MARKER__"
+const OMO_INTERNAL_INITIATOR = "<!-- OMO_INTERNAL_INITIATOR -->"
 
 const subagentSessions = new Set()
 const markedSessions = new Set()
 const sessionParentMap = new Map()
+// Per-session flag: set by chat.message when OMO_INTERNAL_INITIATOR is detected,
+// consumed by chat.headers to set x-omo-initiator header on the same request.
+const omoAgentSessions = new Set()
 
 const getSessionInfo = (event) => {
   if (!event || typeof event !== "object") return undefined
@@ -40,6 +44,20 @@ export const SubagentMarkerPlugin = async () => {
     },
     "chat.message": async (input, output) => {
       const { sessionID } = input
+
+      // Detect OhMyOpenCode internal initiator marker in message parts.
+      // When present, the message is agent-framework-initiated (not user),
+      // so we flag the session for the upcoming chat.headers hook.
+      const hasOmoMarker = output.parts.some(
+        (p) =>
+          p.type === "text" &&
+          typeof p.text === "string" &&
+          p.text.includes(OMO_INTERNAL_INITIATOR),
+      )
+      if (hasOmoMarker) {
+        omoAgentSessions.add(sessionID)
+      }
+
       if (!subagentSessions.has(sessionID) || markedSessions.has(sessionID)) {
         return
       }
@@ -72,6 +90,12 @@ export const SubagentMarkerPlugin = async () => {
       const sessionIdValue = sessionParentMap.get(sessionID)
       if (sessionIdValue) {
         output.headers["x-session-id"] = sessionIdValue
+      }
+      // Set agent initiator header when OMO_INTERNAL_INITIATOR was detected
+      // in the preceding chat.message hook for this session.
+      if (omoAgentSessions.has(sessionID)) {
+        output.headers["x-omo-initiator"] = "agent"
+        omoAgentSessions.delete(sessionID)
       }
     },
   }
