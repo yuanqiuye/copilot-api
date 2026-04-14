@@ -1,10 +1,28 @@
 const MARKER_PREFIX = "__SUBAGENT_MARKER__"
 const OMO_INTERNAL_INITIATOR = "<!-- OMO_INTERNAL_INITIATOR -->"
 
+// Short continuation phrases that should not consume premium requests.
+// Matched against the user's actual text content (after stripping system-reminder blocks).
+const CONTINUATION_PHRASES = new Set([
+  "continue",
+  "繼續",
+  "继续",
+  "go on",
+  "keep going",
+  "proceed",
+  "go ahead",
+  "next",
+  "ok",
+  "okay",
+  "yes",
+  "y",
+])
+
 const subagentSessions = new Set()
 const markedSessions = new Set()
 const sessionParentMap = new Map()
-// Per-session flag: set by chat.message when OMO_INTERNAL_INITIATOR is detected,
+// Per-session flag: set by chat.message when OMO_INTERNAL_INITIATOR is detected
+// or when the user message is a short continuation phrase,
 // consumed by chat.headers to set x-omo-initiator header on the same request.
 const omoAgentSessions = new Set()
 
@@ -56,6 +74,26 @@ export const SubagentMarkerPlugin = async () => {
       )
       if (hasOmoMarker) {
         omoAgentSessions.add(sessionID)
+      }
+
+      // Detect short continuation phrases (e.g. "continue", "繼續").
+      // These are user-typed but semantically equivalent to "keep going" and
+      // should not consume premium requests.
+      if (!hasOmoMarker) {
+        const userTexts = output.parts
+          .filter(
+            (p) =>
+              p.type === "text" &&
+              typeof p.text === "string" &&
+              !p.text.includes("<system-reminder>"),
+          )
+          .map((p) => p.text.trim().toLowerCase())
+        const isContinuation =
+          userTexts.length > 0 &&
+          userTexts.every((t) => CONTINUATION_PHRASES.has(t))
+        if (isContinuation) {
+          omoAgentSessions.add(sessionID)
+        }
       }
 
       if (!subagentSessions.has(sessionID) || markedSessions.has(sessionID)) {
