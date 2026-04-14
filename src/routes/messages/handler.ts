@@ -14,6 +14,7 @@ import { generateRequestIdFromPayload, getRootSessionId } from "~/lib/utils"
 import {
   type AnthropicMessagesPayload,
   type AnthropicTextBlock,
+  type AnthropicToolResultBlock,
 } from "./anthropic-types"
 import {
   handleWithChatCompletions,
@@ -42,34 +43,71 @@ const collapseSystemReminders = (text: string): string =>
     return `[system-reminder: ${firstLine}${inner.length > 80 ? "…" : ""}]`
   })
 
-const extractLastUserMessageContent = (
+const summarizeToolResult = (block: AnthropicToolResultBlock): string => {
+  const errorTag = block.is_error ? " ERROR" : ""
+  if (typeof block.content === "string") {
+    const preview = block.content.slice(0, 120)
+    return `[tool_result${errorTag} ${block.tool_use_id}: ${preview}${block.content.length > 120 ? "…" : ""}]`
+  }
+  const textParts = block.content
+    .filter((b): b is AnthropicTextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join(" ")
+  const preview = textParts.slice(0, 120)
+  return `[tool_result${errorTag} ${block.tool_use_id}: ${preview}${textParts.length > 120 ? "…" : ""}]`
+}
+
+const extractLastMessageContent = (
   payload: AnthropicMessagesPayload,
 ): string => {
-  for (let i = payload.messages.length - 1; i >= 0; i--) {
-    const msg = payload.messages[i]
-    if (msg.role !== "user") continue
+  const lastMsg = payload.messages.at(-1)
+  if (!lastMsg) return ""
 
-    let raw: string | undefined
+  if (typeof lastMsg.content === "string") {
+    const collapsed = collapseSystemReminders(lastMsg.content)
+    return collapsed.length > MAX_CONTENT_LENGTH ?
+        collapsed.slice(0, MAX_CONTENT_LENGTH) + "..."
+      : collapsed
+  }
 
-    if (typeof msg.content === "string") {
-      raw = msg.content
-    } else {
-      const textBlocks = msg.content.filter(
-        (block): block is AnthropicTextBlock => block.type === "text",
-      )
-      if (textBlocks.length > 0) {
-        raw = textBlocks.map((b) => b.text).join("\n")
+  const parts: Array<string> = []
+  for (const block of lastMsg.content) {
+    switch (block.type) {
+      case "text": {
+        parts.push(collapseSystemReminders(block.text))
+
+        break
       }
-    }
+      case "tool_result": {
+        parts.push(summarizeToolResult(block))
 
-    if (raw) {
-      const collapsed = collapseSystemReminders(raw)
-      return collapsed.length > MAX_CONTENT_LENGTH ?
-          collapsed.slice(0, MAX_CONTENT_LENGTH) + "..."
-        : collapsed
+        break
+      }
+      case "tool_use": {
+        parts.push(
+          `[tool_use: ${block.name}(${JSON.stringify(block.input).slice(0, 100)}…)]`,
+        )
+
+        break
+      }
+      case "thinking": {
+        parts.push("[thinking]")
+
+        break
+      }
+      case "image": {
+        parts.push("[image]")
+
+        break
+      }
+      // No default
     }
   }
-  return ""
+
+  const joined = parts.join("\n")
+  return joined.length > MAX_CONTENT_LENGTH ?
+      joined.slice(0, MAX_CONTENT_LENGTH) + "..."
+    : joined
 }
 
 const determineInitiator = (
@@ -164,7 +202,7 @@ export async function handleCompletion(c: Context) {
     isCompact,
     isBackgroundContinue,
     messageCount: anthropicPayload.messages.length,
-    lastMessageContent: extractLastUserMessageContent(anthropicPayload),
+    lastMessageContent: extractLastMessageContent(anthropicPayload),
   })
 
   if (state.manualApprove) {
