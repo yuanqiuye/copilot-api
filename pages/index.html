@@ -217,6 +217,9 @@
           isLoading: false,
           error: null,
           data: null,
+          premiumData: null,
+          autoRefreshPremium: false,
+          autoRefreshPremiumInterval: null,
         };
 
         // --- Rendering Logic ---
@@ -244,12 +247,15 @@
             contentArea.innerHTML = `
                         ${renderUsageQuotas(state.data.quota_snapshots)}
                         ${renderDetailedData(state.data)}
+                        ${renderPremiumTracking(state.premiumData)}
                     `;
           } else {
             contentArea.innerHTML = renderWelcomeMessage();
           }
           // Replace placeholder icons with actual Lucide icons
           createIcons();
+          // Attach premium tracking controls after render
+          attachPremiumControls();
         }
 
         /**
@@ -376,8 +382,125 @@
                         <div class="border p-4 relative font-mono text-xs" style="background-color: var(--color-bg-darkest); border-color: var(--color-bg-light-2);">
                             ${formattedDetails}
                         </div>
-                    </section>
-                `;
+                     </section>
+                 `;
+        }
+
+        /**
+         * Renders the premium tracking section.
+         * @param {object} data - The premium tracking API response data.
+         * @returns {string} HTML string for the premium tracking section.
+         */
+        function renderPremiumTracking(data) {
+          if (!data) return "";
+
+          const sessionStarted = new Date(data.sessionStartedAt).toLocaleTimeString();
+
+          const rows = data.requests.map((req, i) => {
+             const time = new Date(req.timestamp).toLocaleTimeString();
+             const bgBadge = req.isCompact
+                 ? `<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="background-color: rgba(69, 133, 136, 0.2); color: var(--color-blue-accent);">compact</span>`
+                 : req.isBackgroundContinue
+                 ? `<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="background-color: rgba(152, 151, 26, 0.2); color: var(--color-green-accent);">continue</span>`
+                 : req.initiator === 'agent'
+                 ? `<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="background-color: rgba(152, 151, 26, 0.2); color: var(--color-green-accent);">agent</span>`
+                 : `<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="background-color: rgba(214, 93, 14, 0.2); color: var(--color-orange-accent);">user</span>`;
+             const rowBg = req.premiumConsumed ? 'rgba(204, 36, 29, 0.15)' : 'transparent';
+             const escapedContent = (req.lastMessageContent || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+             const hasContent = escapedContent.length > 0;
+
+             return `
+               <tr style="background-color: ${rowBg}; border-bottom: 1px solid var(--color-bg-light-2);">
+                 <td class="p-2">${req.id}</td>
+                 <td class="p-2">${time}</td>
+                 <td class="p-2 font-mono text-xs" style="color: var(--color-blue-accent);">${req.model}</td>
+                 <td class="p-2 text-center">${bgBadge}</td>
+                 <td class="p-2 text-center">${req.isCompact ? 'Yes' : 'No'}</td>
+                 <td class="p-2 text-center">${req.isBackgroundContinue ? 'Yes' : 'No'}</td>
+                 <td class="p-2 text-right">${req.premiumBefore}</td>
+                 <td class="p-2 text-right">${req.premiumAfter}</td>
+                 <td class="p-2 text-center" style="color: ${req.premiumConsumed ? 'var(--color-red-accent)' : 'var(--color-fg-medium)'}">${req.premiumConsumed ? 'Yes' : 'No'}</td>
+                 <td class="p-2 text-center">${req.messageCount || 0}</td>
+               </tr>
+               ${hasContent ? `<tr style="border-bottom: 1px solid var(--color-bg-light-2);">
+                 <td colspan="10" class="px-2 py-1">
+                   <details>
+                     <summary class="cursor-pointer text-xs py-1" style="color: var(--color-gray-accent);">Last user message</summary>
+                     <pre class="mt-1 p-2 text-xs whitespace-pre-wrap break-words" style="background-color: var(--color-bg-light-1); color: var(--color-fg-medium); max-height: 200px; overflow-y: auto;">${escapedContent}</pre>
+                   </details>
+                 </td>
+               </tr>` : ''}
+             `;
+          }).join("");
+
+          return `
+            <section id="premium-tracking" class="mt-6">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-xl font-bold flex items-center gap-2" style="color: var(--color-fg-lightest);">
+                        <i data-lucide="activity"></i> Premium Request Tracking
+                    </h2>
+                    <div class="flex items-center gap-3">
+                        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                            <input type="checkbox" id="auto-refresh-premium" ${state.autoRefreshPremium ? 'checked' : ''}
+                                class="cursor-pointer" style="accent-color: var(--color-blue);" />
+                            <span class="text-xs" style="color: var(--color-gray);">Auto-refresh</span>
+                        </label>
+                        <button id="refresh-premium-btn" type="button"
+                            class="flex items-center gap-1.5 px-3 py-1 text-xs font-bold transition-colors"
+                            style="background-color: var(--color-bg-light-2); color: var(--color-fg-medium);">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                                <path d="M21 3v5h-5" />
+                                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                                <path d="M3 21v-5h5" />
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                    <div class="p-4 border" style="background-color: var(--color-bg); border-color: var(--color-bg-light-2);">
+                        <div class="text-xs mb-1" style="color: var(--color-gray);">Session Started</div>
+                        <div class="text-lg font-bold" style="color: var(--color-fg-lightest);">${sessionStarted}</div>
+                    </div>
+                    <div class="p-4 border" style="background-color: var(--color-bg); border-color: var(--color-bg-light-2);">
+                        <div class="text-xs mb-1" style="color: var(--color-gray);">Initial Premium</div>
+                        <div class="text-lg font-bold" style="color: var(--color-blue-accent);">${data.sessionStartPremiumRemaining}</div>
+                    </div>
+                    <div class="p-4 border" style="background-color: var(--color-bg); border-color: var(--color-bg-light-2);">
+                        <div class="text-xs mb-1" style="color: var(--color-gray);">Current Premium</div>
+                        <div class="text-lg font-bold" style="color: var(--color-green-accent);">${data.currentPremiumRemaining}</div>
+                    </div>
+                    <div class="p-4 border" style="background-color: var(--color-bg); border-color: var(--color-bg-light-2);">
+                        <div class="text-xs mb-1" style="color: var(--color-gray);">Used This Session</div>
+                        <div class="text-lg font-bold" style="color: var(--color-red-accent);">${data.totalPremiumConsumed}</div>
+                    </div>
+                </div>
+                <div class="border overflow-x-auto" style="background-color: var(--color-bg-darkest); border-color: var(--color-bg-light-2); max-height: 500px; overflow-y: auto;">
+                    <table class="w-full text-sm text-left whitespace-nowrap">
+                        <thead class="text-xs uppercase sticky top-0 z-10" style="background-color: var(--color-bg-light-1); color: var(--color-gray-accent);">
+                            <tr>
+                                <th class="p-2 font-medium">#</th>
+                                <th class="p-2 font-medium">Time</th>
+                                <th class="p-2 font-medium">Model</th>
+                                <th class="p-2 font-medium text-center">Initiator</th>
+                                <th class="p-2 font-medium text-center">Compact</th>
+                                <th class="p-2 font-medium text-center">Continue</th>
+                                <th class="p-2 font-medium text-right">Premium Before</th>
+                                <th class="p-2 font-medium text-right">Premium After</th>
+                                <th class="p-2 font-medium text-center">Consumed?</th>
+                                <th class="p-2 font-medium text-center">Msgs</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows}
+                        </tbody>
+                    </table>
+                    ${data.requests.length === 0 ? `<div class="p-4 text-center text-sm" style="color: var(--color-gray);">No requests tracked yet.</div>` : ''}
+                </div>
+            </section>
+          `;
         }
 
         /**
@@ -438,7 +561,99 @@
           `;
         }
 
+        // --- Premium Tracking Controls ---
+
+        /**
+         * Attaches event listeners for the premium tracking refresh button and auto-refresh checkbox.
+         */
+        function attachPremiumControls() {
+          const refreshBtn = document.getElementById('refresh-premium-btn');
+          const autoRefreshCheckbox = document.getElementById('auto-refresh-premium');
+
+          if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+              fetchPremiumTracking();
+            });
+            refreshBtn.addEventListener('mouseenter', () => {
+              refreshBtn.style.backgroundColor = 'var(--color-bg-light-3)';
+            });
+            refreshBtn.addEventListener('mouseleave', () => {
+              refreshBtn.style.backgroundColor = 'var(--color-bg-light-2)';
+            });
+          }
+
+          if (autoRefreshCheckbox) {
+            autoRefreshCheckbox.addEventListener('change', (e) => {
+              state.autoRefreshPremium = e.target.checked;
+              if (state.autoRefreshPremium) {
+                startPremiumAutoRefresh();
+              } else {
+                stopPremiumAutoRefresh();
+              }
+            });
+          }
+        }
+
+        /**
+         * Starts the auto-refresh interval for premium tracking (every 5 seconds).
+         */
+        function startPremiumAutoRefresh() {
+          stopPremiumAutoRefresh();
+          state.autoRefreshPremiumInterval = setInterval(() => {
+            fetchPremiumTracking();
+          }, 5000);
+        }
+
+        /**
+         * Stops the auto-refresh interval for premium tracking.
+         */
+        function stopPremiumAutoRefresh() {
+          if (state.autoRefreshPremiumInterval) {
+            clearInterval(state.autoRefreshPremiumInterval);
+            state.autoRefreshPremiumInterval = null;
+          }
+        }
+
         // --- Data Fetching ---
+
+        /**
+         * Fetches premium tracking data from the local API endpoint.
+         */
+        async function fetchPremiumTracking() {
+          try {
+            const response = await fetch('/premium-tracking');
+            if (response.ok) {
+              state.premiumData = await response.json();
+              const existing = document.getElementById('premium-tracking');
+              if (existing && state.data && !state.isLoading) {
+                // Save scroll position and open details states
+                const scrollContainer = existing.querySelector('.overflow-y-auto');
+                const scrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+                const openDetails = new Set();
+                existing.querySelectorAll('details[open]').forEach((d, i) => openDetails.add(i));
+
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = renderPremiumTracking(state.premiumData);
+                const newSection = wrapper.firstElementChild;
+                existing.replaceWith(newSection);
+
+                // Restore scroll position and open details states
+                const newScrollContainer = newSection.querySelector('.overflow-y-auto');
+                if (newScrollContainer) newScrollContainer.scrollTop = scrollTop;
+                newSection.querySelectorAll('details').forEach((d, i) => {
+                  if (openDetails.has(i)) d.setAttribute('open', '');
+                });
+
+                createIcons();
+                attachPremiumControls();
+              } else if (state.data && !state.isLoading) {
+                render();
+              }
+            }
+          } catch (e) {
+            console.error('Failed to fetch premium tracking:', e);
+          }
+        }
 
         /**
          * Fetches data from the specified API endpoint.
@@ -514,6 +729,8 @@
             endpointUrlInput.value = DEFAULT_ENDPOINT;
             render(); // Render initial welcome message
           }
+
+          fetchPremiumTracking();
         }
 
         // Start the app
