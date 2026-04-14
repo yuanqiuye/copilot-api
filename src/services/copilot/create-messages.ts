@@ -5,6 +5,7 @@ import type {
   AnthropicMessagesPayload,
   AnthropicResponse,
 } from "~/routes/messages/anthropic-types"
+import { isAgentFrameworkText } from "~/routes/messages/preprocess"
 import type { SubagentMarker } from "~/routes/messages/subagent-marker"
 
 import {
@@ -68,6 +69,7 @@ export const createMessages = async (
     requestId: string
     sessionId?: string
     isCompact?: boolean
+    omoInitiator?: string
   },
 ): Promise<CreateMessagesReturn> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
@@ -84,12 +86,21 @@ export const createMessages = async (
   })
 
   let isInitiateRequest = false
-  const lastMessage = payload.messages.at(-1)
-  if (lastMessage?.role === "user") {
-    isInitiateRequest =
-      Array.isArray(lastMessage.content) ?
-        lastMessage.content.some((block) => block.type !== "tool_result")
-      : true
+  if (options.omoInitiator === "agent") {
+    // Plugin explicitly signaled this is agent-initiated (via x-omo-initiator header)
+    isInitiateRequest = false
+  } else {
+    const lastMessage = payload.messages.at(-1)
+    if (lastMessage?.role === "user") {
+      isInitiateRequest =
+        Array.isArray(lastMessage.content) ?
+          lastMessage.content.some(
+            (block) =>
+              block.type !== "tool_result"
+              && !(block.type === "text" && isAgentFrameworkText(block.text)),
+          )
+        : !isAgentFrameworkText(lastMessage.content)
+    }
   }
 
   const headers: Record<string, string> = {

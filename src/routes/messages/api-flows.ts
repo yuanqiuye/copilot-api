@@ -51,6 +51,7 @@ export interface FlowBaseOptions {
   requestId: string
   sessionId?: string
   isCompact?: boolean
+  omoInitiator?: string
 }
 
 interface ResponsesFlowOptions extends FlowBaseOptions {
@@ -233,6 +234,7 @@ export const handleWithMessagesApi = async (
     requestId,
     sessionId,
     isCompact,
+    omoInitiator,
   } = options
 
   prepareMessagesApiPayload(anthropicPayload, selectedModel)
@@ -244,6 +246,7 @@ export const handleWithMessagesApi = async (
     requestId,
     sessionId,
     isCompact,
+    omoInitiator,
   })
 
   if (isAsyncIterable(response)) {

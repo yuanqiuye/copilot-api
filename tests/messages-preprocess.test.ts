@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import type { AnthropicMessagesPayload } from "../src/routes/messages/anthropic-types"
 
 import {
+  isAgentFrameworkText,
   isCompactRequest,
   isPostCompactionContinue,
   mergeToolResultForClaude,
@@ -594,8 +595,7 @@ describe("isPostCompactionContinue", () => {
       messages: [
         {
           role: "user",
-          content:
-            "Continue if you have next steps, please also fix the auth bug.",
+          content: "Continue if you have next steps, please also fix the auth bug.",
         },
       ],
     }
@@ -632,5 +632,49 @@ describe("isPostCompactionContinue", () => {
     }
 
     expect(isPostCompactionContinue(payload)).toBe(false)
+  })
+})
+
+describe("isAgentFrameworkText", () => {
+  test("detects <!-- OMO_INTERNAL_INITIATOR --> marker", () => {
+    expect(
+      isAgentFrameworkText(
+        "<!-- OMO_INTERNAL_INITIATOR --><system-reminder>...</system-reminder><ultrawork-mode>...</ultrawork-mode>",
+      ),
+    ).toBe(true)
+  })
+
+  test("detects <!-- OMO_INTERNAL_INITIATOR --> in the middle of text", () => {
+    expect(
+      isAgentFrameworkText(
+        "<system-reminder>rules</system-reminder>\n[restore checkpointed session agent configuration after compaction]\n<!-- OMO_INTERNAL_INITIATOR --><system-reminder>more rules</system-reminder><ultrawork-mode>config</ultrawork-mode>",
+      ),
+    ).toBe(true)
+  })
+
+  test("does not detect <system-reminder> without OMO marker (user messages can have it)", () => {
+    expect(
+      isAgentFrameworkText(
+        "<system-reminder>\n## Question Tool Usage Rules\n</system-reminder>",
+      ),
+    ).toBe(false)
+  })
+
+  test("does not detect normal user text", () => {
+    expect(
+      isAgentFrameworkText("Please help me fix this bug."),
+    ).toBe(false)
+  })
+
+  test("does not detect text mentioning OMO in normal conversation", () => {
+    expect(
+      isAgentFrameworkText(
+        "User asked about the OMO_INTERNAL_INITIATOR marker",
+      ),
+    ).toBe(false)
+  })
+
+  test("does not detect empty string", () => {
+    expect(isAgentFrameworkText("")).toBe(false)
   })
 })

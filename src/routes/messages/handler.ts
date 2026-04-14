@@ -24,6 +24,7 @@ import {
   handleWithResponsesApi,
 } from "./api-flows"
 import {
+  isAgentFrameworkText,
   isCompactRequest,
   isPostCompactionContinue,
   mergeToolResultForClaude,
@@ -110,18 +111,32 @@ export async function handleCompletion(c: Context) {
   const requestId = generateRequestIdFromPayload(anthropicPayload, sessionId)
   logger.debug("Generated request ID:", requestId)
 
+  // Determine effective x-initiator value (mirrors create-messages.ts logic)
+  // Priority: isBackground > subagent > omoInitiator header > content-based detection
+  const omoInitiator = c.req.header("x-omo-initiator")
   let initiator: "user" | "agent" = "agent"
   if (!isBackground && !subagentMarker) {
-    const lastMessage = anthropicPayload.messages.at(-1)
-    if (lastMessage?.role === "user") {
-      const isInitiateRequest =
-        Array.isArray(lastMessage.content) ?
-          lastMessage.content.some((block) => block.type !== "tool_result")
-        : true
-      initiator = isInitiateRequest ? "user" : "agent"
+    if (omoInitiator === "agent") {
+      initiator = "agent"
+    } else {
+      const lastMessage = anthropicPayload.messages.at(-1)
+      if (lastMessage?.role === "user") {
+        const isInitiateRequest =
+          Array.isArray(lastMessage.content)
+            ? lastMessage.content.some(
+                (block) =>
+                  block.type !== "tool_result"
+                  && !(
+                    block.type === "text" && isAgentFrameworkText(block.text)
+                  ),
+              )
+            : !isAgentFrameworkText(lastMessage.content)
+        initiator = isInitiateRequest ? "user" : "agent"
+      }
     }
   }
 
+  // Track request for premium debugging
   const trackingId = trackRequest({
     model: anthropicPayload.model,
     initiator,
@@ -147,6 +162,7 @@ export async function handleCompletion(c: Context) {
       requestId,
       sessionId,
       isCompact: isBackground,
+      omoInitiator,
       logger,
     })
     void checkPremiumAfterRequest(trackingId)
@@ -160,6 +176,7 @@ export async function handleCompletion(c: Context) {
       requestId,
       sessionId,
       isCompact: isBackground,
+      omoInitiator,
       logger,
     })
     void checkPremiumAfterRequest(trackingId)
@@ -171,6 +188,7 @@ export async function handleCompletion(c: Context) {
     requestId,
     sessionId,
     isCompact: isBackground,
+    omoInitiator,
     logger,
   })
   void checkPremiumAfterRequest(trackingId)

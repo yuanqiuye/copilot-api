@@ -382,8 +382,8 @@
                         <div class="border p-4 relative font-mono text-xs" style="background-color: var(--color-bg-darkest); border-color: var(--color-bg-light-2);">
                             ${formattedDetails}
                         </div>
-                     </section>
-                 `;
+                    </section>
+                `;
         }
 
         /**
@@ -393,9 +393,9 @@
          */
         function renderPremiumTracking(data) {
           if (!data) return "";
-
+          
           const sessionStarted = new Date(data.sessionStartedAt).toLocaleTimeString();
-
+          
           const rows = data.requests.map((req, i) => {
              const time = new Date(req.timestamp).toLocaleTimeString();
              const bgBadge = req.isCompact
@@ -408,7 +408,7 @@
              const rowBg = req.premiumConsumed ? 'rgba(204, 36, 29, 0.15)' : 'transparent';
              const escapedContent = (req.lastMessageContent || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
              const hasContent = escapedContent.length > 0;
-
+             
              return `
                <tr style="background-color: ${rowBg}; border-bottom: 1px solid var(--color-bg-light-2);">
                  <td class="p-2">${req.id}</td>
@@ -729,7 +729,7 @@
             endpointUrlInput.value = DEFAULT_ENDPOINT;
             render(); // Render initial welcome message
           }
-
+          
           fetchPremiumTracking();
         }
 

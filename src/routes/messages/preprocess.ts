@@ -19,7 +19,8 @@ const compactMessageSections = ["Pending Tasks:", "Current Work:"] as const
 
 // OpenCode compaction prompt markers (from opencode/src/session/compaction.ts)
 const opencodeCompactNoTools = "Do not call any tools."
-const opencodeCompactContinuing = "continuing our conversation"
+const opencodeCompactContinuing =
+  "continuing our conversation"
 const opencodeCompactSections = [
   "## Goal",
   "## Accomplished",
@@ -33,7 +34,17 @@ const opencodePostCompactContinueText =
 // Overflow prefix — older versions used "exceeded the context window",
 // current versions use "exceeded the provider's size limit".
 // Match the common prefix "The previous request exceeded" for forward compat.
-const opencodePostCompactOverflowPrefix = "The previous request exceeded"
+const opencodePostCompactOverflowPrefix =
+  "The previous request exceeded"
+
+// Detect text content explicitly marked as agent-framework initiated.
+// <!-- OMO_INTERNAL_INITIATOR --> is injected by OhMyOpenCode for messages
+// that are NOT user-initiated (e.g., post-compaction continuation, session
+// restoration, ultrawork-mode activation). <system-reminder> blocks alone
+// are NOT sufficient — plugins inject them into user messages too.
+export const isAgentFrameworkText = (text: string): boolean => {
+  return text.includes("<!-- OMO_INTERNAL_INITIATOR -->")
+}
 
 export const TOOL_REFERENCE_TURN_BOUNDARY = "Tool loaded."
 
